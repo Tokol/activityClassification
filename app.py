@@ -560,28 +560,63 @@ if st.session_state.df is not None:
         st.header("📊 Step 2: Data Exploration & Visualization")
 
         # Get unique activities for color mapping
-        activities_list = features_df["activity"].unique()
-        num_activities = len(activities_list)
+        activities_from_features = list(features_df["activity"].unique())
+        num_activities = len(activities_from_features)
 
-        # Generate colors for activities
-        if num_activities == 3 and activity_mode == "Default Activities (walking, toe-rise, running)":
-            # Use original colors for default 3 activities
-            activity_colors = {
+        # Generate colors for ALL activities (including custom ones)
+        # Create a consistent color mapping that works for both matplotlib and plotly
+        matplotlib_color_names = ['tab:blue', 'tab:orange', 'tab:green', 'tab:red', 'tab:purple',
+                                  'tab:brown', 'tab:pink', 'tab:gray', 'tab:olive', 'tab:cyan']
+
+        plotly_color_names = ['blue', 'orange', 'green', 'red', 'purple',
+                              'brown', 'pink', 'gray', 'olive', 'cyan']
+
+        # Create activity to color mapping for both matplotlib and plotly
+        matplotlib_activity_colors = {}
+        plotly_activity_colors = {}
+        activity_names = {}  # For display names
+
+        if activity_mode == "Default Activities (walking, toe-rise, running)":
+            # Use predefined colors for default activities
+            matplotlib_activity_colors = {
+                "walking": "tab:blue",
+                "toe_rise": "tab:orange",
+                "running": "tab:red"
+            }
+            plotly_activity_colors = {
                 "walking": "blue",
                 "toe_rise": "orange",
                 "running": "red"
             }
-            # Get activity display names
             activity_names = {
                 "walking": "Walking",
                 "toe_rise": "Toe-rise",
                 "running": "Running"
             }
         else:
-            # Generate colors for custom activities
-            color_palette = px.colors.qualitative.Set3[:num_activities]
-            activity_colors = {activity: color_palette[i] for i, activity in enumerate(activities_list)}
-            activity_names = {activity: activity.replace("_", " ").title() for activity in activities_list}
+            # For custom activities, map each unique name to a color
+            # First, get ALL unique activity names
+            all_activity_names = set()
+
+            # Add from session state custom activities
+            for activity in st.session_state.custom_activities:
+                all_activity_names.add(activity["name"])
+
+            # Add from features_df if available
+            all_activity_names.update(features_df["activity"].unique())
+
+            # Create mapping
+            all_activity_names = list(all_activity_names)
+            for i, activity_name in enumerate(all_activity_names):
+                mat_color = matplotlib_color_names[i % len(matplotlib_color_names)]
+                plt_color = plotly_color_names[i % len(plotly_color_names)]
+
+                matplotlib_activity_colors[activity_name] = mat_color
+                plotly_activity_colors[activity_name] = plt_color
+
+                # Create display name (capitalize, replace underscores)
+                display_name = activity_name.replace("_", " ").title()
+                activity_names[activity_name] = display_name
 
         # ==========================
         # 1. RAW SIGNAL PLOT
@@ -591,35 +626,95 @@ if st.session_state.df is not None:
         fig, ax = plt.subplots(figsize=(12, 4))
         ax.plot(df["Time (s)"], df["magnitude"], color="black", alpha=0.6, linewidth=0.8)
 
-        # Add activity regions
+        # Add activity regions to the plot
         if activity_mode == "Default Activities (walking, toe-rise, running)":
             # For default mode, use original visualization
-            ax.axvspan(time_ranges["walking_start"], time_ranges["walking_end"],
-                       color="tab:blue", alpha=0.25, label="Walking")
-            ax.axvspan(time_ranges["toe_start"], time_ranges["toe_end"],
-                       color="tab:orange", alpha=0.25, label="Toe-rise")
-            ax.axvspan(time_ranges["run_start"], time_ranges["run_end"],
-                       color="tab:red", alpha=0.25, label="Running")
+            if "walking_start" in time_ranges and "walking_end" in time_ranges:
+                ax.axvspan(time_ranges["walking_start"], time_ranges["walking_end"],
+                           color="tab:blue", alpha=0.25, label="Walking")
+
+            if "toe_start" in time_ranges and "toe_end" in time_ranges:
+                ax.axvspan(time_ranges["toe_start"], time_ranges["toe_end"],
+                           color="tab:orange", alpha=0.25, label="Toe-rise")
+
+            if "run_start" in time_ranges and "run_end" in time_ranges:
+                ax.axvspan(time_ranges["run_start"], time_ranges["run_end"],
+                           color="tab:red", alpha=0.25, label="Running")
         else:
-            # For custom activities
+            # For custom activities - use the stored time_ranges format
+            # We need to handle both old and new format of time_ranges
+            processed_activities = set()  # Track which activities we've plotted
+
+            # Try new format first (with activity_i_name keys)
             for i in range(num_activities):
                 start_key = f"activity_{i}_start"
                 end_key = f"activity_{i}_end"
                 name_key = f"activity_{i}_name"
 
                 if start_key in time_ranges and end_key in time_ranges and name_key in time_ranges:
-                    activity_name = time_ranges[name_key]
-                    color = activity_colors.get(activity_name, "gray")
-                    ax.axvspan(time_ranges[start_key], time_ranges[end_key],
-                               color=color, alpha=0.25, label=activity_names.get(activity_name, activity_name))
+                    activity_name = str(time_ranges[name_key]).strip()  # Ensure it's a string
+                    start_time = time_ranges[start_key]
+                    end_time = time_ranges[end_key]
 
-        ax.legend(
-            title="Activity",
-            loc="upper left",
-            bbox_to_anchor=(1.01, 1),
-            fontsize=9,
-            title_fontsize=10
-        )
+                    # Skip if times are invalid
+                    if start_time >= end_time:
+                        continue
+
+                    # Get color, default to gray if not found
+                    color = matplotlib_activity_colors.get(activity_name, "gray")
+
+                    # Ensure color is a valid string
+                    if not isinstance(color, str):
+                        color = "gray"
+
+                    # Get display name
+                    display_name = activity_names.get(activity_name,
+                                                      activity_name.replace("_", " ").title())
+
+                    # Plot this activity region
+                    ax.axvspan(start_time, end_time,
+                               color=color, alpha=0.25, label=display_name)
+
+                    processed_activities.add(activity_name)
+
+            # If no activities were plotted with new format, try old format
+            if not processed_activities:
+                # Check if we have direct activity entries (like in default mode but with custom names)
+                # This handles the case where time_ranges might have direct activity names
+                for activity_name in matplotlib_activity_colors.keys():
+                    start_key = f"{activity_name}_start"
+                    end_key = f"{activity_name}_end"
+
+                    if start_key in time_ranges and end_key in time_ranges:
+                        start_time = time_ranges[start_key]
+                        end_time = time_ranges[end_key]
+
+                        # Skip if times are invalid
+                        if start_time >= end_time:
+                            continue
+
+                        color = matplotlib_activity_colors.get(activity_name, "gray")
+                        if not isinstance(color, str):
+                            color = "gray"
+
+                        display_name = activity_names.get(activity_name,
+                                                          activity_name.replace("_", " ").title())
+
+                        ax.axvspan(start_time, end_time,
+                                   color=color, alpha=0.25, label=display_name)
+
+        # Only add legend if we actually plotted some activities
+        handles, labels = ax.get_legend_handles_labels()
+        if handles:
+            ax.legend(
+                title="Activity",
+                loc="upper left",
+                bbox_to_anchor=(1.01, 1),
+                fontsize=9,
+                title_fontsize=10
+            )
+        else:
+            st.warning("⚠️ No valid activity time ranges found for visualization.")
 
         x_start = int(df["Time (s)"].min())
         x_end = int(df["Time (s)"].max())
@@ -674,7 +769,7 @@ if st.session_state.df is not None:
                     labels=segment_counts_display["Activity"],
                     values=segment_counts_display["Segments"],
                     hole=0.3,
-                    marker_colors=[activity_colors.get(act, "gray") for act in segment_counts.index],
+                    marker_colors=[plotly_activity_colors.get(act, 'gray') for act in segment_counts.index],
                     textinfo='label+value+percent',
                     hovertemplate="<b>%{label}</b><br>Segments: %{value}<br>Percentage: %{percent}<extra></extra>"
                 )
@@ -697,7 +792,7 @@ if st.session_state.df is not None:
             feature_discriminability = []
             for feature in all_features:
                 groups = [features_df[features_df["activity"] == act][feature].values
-                          for act in activities_list]
+                          for act in activities_from_features]
                 groups = [g for g in groups if len(g) > 0]
                 if len(groups) >= 2:
                     f_stat, _ = stats.f_oneway(*groups)
@@ -741,7 +836,7 @@ if st.session_state.df is not None:
                 x="mean_magnitude",
                 y="rms_magnitude",
                 color="activity",
-                color_discrete_map=activity_colors,
+                color_discrete_map=plotly_activity_colors,
                 title="Mean vs RMS Magnitude",
                 labels={
                     "mean_magnitude": "Mean Magnitude (m/s²)",
@@ -759,7 +854,7 @@ if st.session_state.df is not None:
                 x="std_magnitude",
                 y="p2p_magnitude",
                 color="activity",
-                color_discrete_map=activity_colors,
+                color_discrete_map=plotly_activity_colors,
                 title="Std Dev vs Peak-to-Peak",
                 labels={
                     "std_magnitude": "Standard Deviation (m/s²)",
@@ -859,7 +954,7 @@ if st.session_state.df is not None:
             # Line plot across time segments
             fig_m1 = go.Figure()
 
-            for activity in activities_list:
+            for activity in activities_from_features:
                 activity_data = features_df[features_df["activity"] == activity]
                 if not activity_data.empty:
                     display_name = activity_names.get(activity, activity.replace("_", " ").title())
@@ -868,7 +963,7 @@ if st.session_state.df is not None:
                         y=activity_data[selected_motion_feature],
                         mode='lines+markers',
                         name=display_name,
-                        line=dict(color=activity_colors[activity], width=2),
+                        line=dict(color=plotly_activity_colors.get(activity, 'gray'), width=2),
                         marker=dict(size=6),
                         hovertemplate='<b>%{text}</b><br>' +
                                       'Time: %{x:.1f}s<br>' +
@@ -903,7 +998,7 @@ if st.session_state.df is not None:
             fig_m2 = go.Figure()
 
             # Add scatter points for each activity
-            for activity in activities_list:
+            for activity in activities_from_features:
                 activity_data = features_df[features_df["activity"] == activity]
                 if not activity_data.empty:
                     display_name = activity_names.get(activity, activity.replace("_", " ").title())
@@ -914,7 +1009,7 @@ if st.session_state.df is not None:
                         name=display_name,
                         marker=dict(
                             size=8,
-                            color=activity_colors[activity],
+                            color=plotly_activity_colors.get(activity, 'gray'),
                             opacity=0.7,
                             line=dict(width=1, color='white')
                         ),
@@ -928,7 +1023,7 @@ if st.session_state.df is not None:
 
             # Calculate statistics for summary box
             summary_data = {}
-            for activity in activities_list:
+            for activity in activities_from_features:
                 activity_data = features_df[features_df["activity"] == activity]
                 if not activity_data.empty:
                     values = activity_data[selected_motion_feature_t2]
@@ -1094,7 +1189,7 @@ if st.session_state.df is not None:
                     array=activity_rms['std'],
                     visible=True
                 ),
-                marker_color=[activity_colors.get(act, 'gray') for act in activity_rms['activity']],
+                marker_color=[plotly_activity_colors.get(act, 'gray') for act in activity_rms['activity']],
                 text=activity_rms['mean'].round(3),
                 textposition='auto',
                 hovertemplate='<b>%{x}</b><br>' +
@@ -1186,7 +1281,7 @@ if st.session_state.df is not None:
             # Line plot across time segments
             fig_shape1 = go.Figure()
 
-            for activity in activities_list:
+            for activity in activities_from_features:
                 activity_data = features_df[features_df["activity"] == activity]
                 if not activity_data.empty:
                     display_name = activity_names.get(activity, activity.replace("_", " ").title())
@@ -1195,7 +1290,7 @@ if st.session_state.df is not None:
                         y=activity_data[selected_shape_feature],
                         mode='lines+markers',
                         name=display_name,
-                        line=dict(color=activity_colors[activity], width=2),
+                        line=dict(color=plotly_activity_colors.get(activity, 'gray'), width=2),
                         marker=dict(size=6)
                     ))
 
@@ -1219,14 +1314,14 @@ if st.session_state.df is not None:
             # Boxplot by activity
             fig_shape2 = go.Figure()
 
-            for activity in activities_list:
+            for activity in activities_from_features:
                 activity_data = features_df[features_df["activity"] == activity]
                 if not activity_data.empty:
                     display_name = activity_names.get(activity, activity.replace("_", " ").title())
                     fig_shape2.add_trace(go.Box(
                         y=activity_data[selected_shape_feature],
                         name=display_name,
-                        marker_color=activity_colors[activity],
+                        marker_color=plotly_activity_colors.get(activity, 'gray'),
                         boxmean=True
                     ))
 
@@ -1262,7 +1357,7 @@ if st.session_state.df is not None:
                     barmode="overlay",
                     nbins=20,
                     title=f"Distribution by Activity",
-                    color_discrete_map=activity_colors,
+                    color_discrete_map=plotly_activity_colors,
                     labels={
                         selected_shape_feature: selected_shape_feature.replace('_', ' ').title(),
                         "activity": "Activity"
@@ -1316,7 +1411,7 @@ if st.session_state.df is not None:
         - **Test Set:** {test_size * 100:.0f}% of data
         - **KNN:** k={k_value} neighbors, 4 motion features
         - **Random Forest:** {n_trees} trees, all 9 features
-        - **Activities:** {', '.join([activity_names.get(a, a.replace('_', ' ').title()) for a in activities_list])}
+        - **Activities:** {', '.join([activity_names.get(a, a.replace('_', ' ').title()) for a in activities_from_features])}
         """)
 
         if st.button("🚀 Run KNN vs Random Forest Comparison", type="primary", key="run_algorithms"):
@@ -1430,7 +1525,7 @@ if st.session_state.df is not None:
             - **RF Training Time:** {rf_results['metrics']['training_time']:.3f}s
             - **KNN Features:** 4 motion features
             - **RF Features:** 9 features (4 motion + 5 shape)
-            - **Number of Activities:** {len(activities_list)}
+            - **Number of Activities:** {len(activities_from_features)}
             """)
 
             # ==========================
@@ -1600,7 +1695,7 @@ if st.session_state.df is not None:
                     f"{knn_time:.3f}s",
                     f"{knn_pred_time:.3f}s",
                     "4 motion features",
-                    f"{len(activities_list)} activities"
+                    f"{len(activities_from_features)} activities"
                 ],
                 'Random Forest': [
                     f"{rf_acc:.3f}",
@@ -1608,7 +1703,7 @@ if st.session_state.df is not None:
                     f"{rf_time:.3f}s",
                     f"{rf_pred_time:.3f}s",
                     "9 features (motion + shape)",
-                    f"{len(activities_list)} activities"
+                    f"{len(activities_from_features)} activities"
                 ],
                 'Winner': [
                     '✅ KNN' if knn_acc > rf_acc else ('✅ RF' if rf_acc > knn_acc else '🤝 Tie'),
@@ -1646,7 +1741,7 @@ if st.session_state.df is not None:
                - Training: {('KNN is' if knn_time < rf_time else 'Random Forest is')} {abs(knn_time - rf_time):.2f}s {'faster' if knn_time < rf_time else 'slower'}
                - Prediction: {('KNN is' if knn_pred_time < rf_pred_time else 'Random Forest is')} {abs(knn_pred_time - rf_pred_time):.3f}s {'faster' if knn_pred_time < rf_pred_time else 'slower'}
 
-            3. **Activity Analysis:** You're classifying {len(activities_list)} different activities
+            3. **Activity Analysis:** You're classifying {len(activities_from_features)} different activities
             4. **Recommendation:** {'**Use KNN** for real-time applications' if knn_pred_time < rf_pred_time else '**Use Random Forest** for batch processing'}
             """)
 
@@ -1759,7 +1854,7 @@ if st.session_state.df is not None:
             st.markdown("#### 🎯 Most Challenging Activities")
             activity_errors = []
 
-            for activity in activities_list:
+            for activity in activities_from_features:
                 display_name = activity_names.get(activity, activity.replace('_', ' ').title())
                 knn_act_error = sum((knn_true == activity) & knn_misclassified) / sum(knn_true == activity) if sum(
                     knn_true == activity) > 0 else 0
@@ -1883,7 +1978,7 @@ if st.session_state.df is not None:
                 - **Test size:** At least 20-30 samples per activity class
                 - **Training size:** At least 50-100 samples per activity class
                 - **Your current split:** {test_count} test samples, {train_count} training samples
-                - **Samples per activity:** {len(features_df) // len(activities_list)} average
+                - **Samples per activity:** {len(features_df) // len(activities_from_features)} average
                 """)
 
             # ============================================
@@ -1932,7 +2027,7 @@ if st.session_state.df is not None:
                 **Your Settings:**
                 - Test Size: **{test_size * 100}%**
                 - Total Segments: **{total}**
-                - Activities: **{len(activities_list)}**
+                - Activities: **{len(activities_from_features)}**
 
                 ⚠️ **Key Principle:**
                 Test data was **NEVER seen** during training!
@@ -2114,7 +2209,7 @@ if st.session_state.df is not None:
                     - Training segments: **{train_count}**
                     - Test segments: **{test_count}**
                     - Ratio: **{train_count}:{test_count}**
-                    - Activities: **{len(activities_list)}**
+                    - Activities: **{len(activities_from_features)}**
 
                     **Rule of thumb:** At least 20 samples per activity class in test set
                     """)
@@ -2134,7 +2229,7 @@ if st.session_state.df is not None:
                 **Model Details:**
                 - Accuracy: {knn_results['metrics']['accuracy']:.3f}
                 - Features: 4 motion features
-                - Activities: {len(activities_list)}
+                - Activities: {len(activities_from_features)}
                 - Optimal k: {knn_results['optimal_k_results']['optimal_k'] if 'optimal_k_results' in knn_results else 'N/A'}
                 """)
 
@@ -2145,7 +2240,7 @@ if st.session_state.df is not None:
                     'feature_names': knn_results['model'].feature_names,
                     'accuracy': knn_results['metrics']['accuracy'],
                     'training_date': pd.Timestamp.now().strftime('%Y-%m-%d %H:%M:%S'),
-                    'classes': list(activities_list),
+                    'classes': list(activities_from_features),
                     'activity_names': activity_names,
                     'test_size': test_size,
                     'parameters': knn_results.get('parameters', {})
@@ -2169,7 +2264,7 @@ if st.session_state.df is not None:
                 **Model Details:**
                 - Accuracy: {rf_results['metrics']['accuracy']:.3f}
                 - Features: 9 features (4 motion + 5 shape)
-                - Activities: {len(activities_list)}
+                - Activities: {len(activities_from_features)}
                 - Trees: {n_trees}
                 """)
 
@@ -2179,7 +2274,7 @@ if st.session_state.df is not None:
                     'feature_names': rf_results['model'].feature_names,
                     'accuracy': rf_results['metrics']['accuracy'],
                     'training_date': pd.Timestamp.now().strftime('%Y-%m-%d %H:%M:%S'),
-                    'classes': list(activities_list),
+                    'classes': list(activities_from_features),
                     'activity_names': activity_names,
                     'n_estimators': n_trees,
                     'test_size': test_size,
@@ -2215,8 +2310,8 @@ if st.session_state.df is not None:
                         'train_samples': train_count,
                         'test_samples': test_count,
                         'test_size': test_size,
-                        'num_activities': len(activities_list),
-                        'activities': list(activities_list)
+                        'num_activities': len(activities_from_features),
+                        'activities': list(activities_from_features)
                     }
                 }
 
