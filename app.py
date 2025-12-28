@@ -9,7 +9,13 @@ from scipy import stats
 
 # Import custom modules
 from features import compute_magnitude
-from knn_module import run_knn_pipeline
+try:
+    from knn_module import run_knn_pipeline
+except ImportError:
+    # For Streamlit Cloud or when module is in same directory
+    # Create a workaround or include the code directly
+    from knn_module import run_knn_pipeline
+
 from randomforest_module import run_rf_pipeline
 import joblib
 import pickle
