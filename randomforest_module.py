@@ -8,8 +8,7 @@ FIXED: Cross-validation uses ONLY training data to prevent data leakage.
 
 import pandas as pd
 import numpy as np
-import matplotlib.pyplot as plt
-import seaborn as sns
+
 from sklearn.model_selection import train_test_split, cross_val_score
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.metrics import (
@@ -17,7 +16,7 @@ from sklearn.metrics import (
     confusion_matrix, classification_report
 )
 import plotly.graph_objects as go
-import plotly.express as px
+
 import time
 
 
